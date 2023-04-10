@@ -5,9 +5,13 @@ Werkzeug Documentation:  https://werkzeug.palletsprojects.com/
 This file creates your application.
 """
 
-from app import app
-from flask import render_template, request, jsonify, send_file
+from app import app, db
+from flask import render_template, request, jsonify, send_from_directory
 import os
+from flask_wtf.csrf import generate_csrf
+from app.forms import MovieForm
+from app.models import Movie
+
 
 
 ###
@@ -22,9 +26,6 @@ def index():
 ###
 # The functions below should be applicable to all Flask apps.
 ###
-
-# Here we define a function to collect form errors from Flask-WTF
-# which we can later use
 def form_errors(form):
     error_messages = []
     """Collects form errors"""
@@ -37,6 +38,59 @@ def form_errors(form):
             error_messages.append(message)
 
     return error_messages
+
+
+
+@app.route('/api/v1/movies', methods=['POST'])
+def add_movie():
+    form = MovieForm()
+
+    if form.validate_on_submit():
+        # Save the movie to the database
+        movie = Movie(title=form.title.data, poster=form.poster.data.filename, description=form.description.data)
+        db.session.add(movie)
+        db.session.commit()
+
+        # Save the movie poster file to the uploads folder
+        if not os.path.exists('app/static/uploads'):
+            os.makedirs('app/static/uploads')
+        form.poster.data.save(f'app/static/uploads/{form.poster.data.filename}')
+
+        # Return a JSON response with the movie details
+        return jsonify({
+            'message': 'Movie successfully added',
+            'title': movie.title,
+            'poster': form.poster.data.filename,
+            'description': movie.description
+        }), 201
+    else:
+        # Return a JSON response with the form errors
+        return jsonify({'errors': form_errors(form)}), 400
+
+# Here we define a function to collect form errors from Flask-WTF
+# which we can later use
+
+@app.route('/api/v1/movies')
+def get_movies():
+    movies = Movie.query.all()
+    movie_list = []
+    for movie in movies:
+        movie_dict = {
+            'id': movie.id,
+            'title': movie.title,
+            'description': movie.description,
+            'poster': f'/api/v1/posters/{movie.poster}'
+
+        }
+        movie_list.append(movie_dict)
+    return jsonify({'movies': movie_list})
+
+@app.route('/api/v1/posters/<filename>')
+def get_poster(filename):
+    return send_from_directory(os.path.join(app.root_path, 'static', 'uploads'), filename)
+
+
+
 
 @app.route('/<file_name>.txt')
 def send_text_file(file_name):
@@ -61,3 +115,7 @@ def add_header(response):
 def page_not_found(error):
     """Custom 404 page."""
     return render_template('404.html'), 404
+
+@app.route('/api/v1/csrf-token', methods=['GET'])
+def get_csrf():
+ return jsonify({'csrf_token': generate_csrf()})
